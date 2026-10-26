@@ -72,7 +72,7 @@
       <div class="code" id="codigo">----</div>
       <div class="status"><span class="dot" id="dot"></span><span id="estado">Esperando…</span></div>
       <p class="hint" id="red"></p>
-      <details class="hint"><summary>Registro de conexión</summary><ol id="log" style="margin:8px 0 0;padding-left:0;list-style:none;font:12px/1.6 ui-monospace,Consolas,monospace"></ol></details>
+      <details class="hint"><summary>Registro de conexión</summary><button id="copiarLog" style="margin-top:8px;padding:8px 12px">Copiar registro</button><ol id="log" style="margin:8px 0 0;padding-left:0;list-style:none;font:12px/1.6 ui-monospace,Consolas,monospace"></ol></details>
       <button id="salir">Salir de la sala</button>
     </div>
 
@@ -212,26 +212,30 @@ function unirse() {
 
 function conectar() {
   estado(yaEstuvo ? "Reconectando…" : "Conectando…", "wait");
+  tDatos = Date.now(); log(yaEstuvo ? "Reintentando…" : "Tocando la puerta de la sala");
   conn = peer.connect(PREF + sala, { reliable: true });
   armarDatos();
   llamar();
 }
 
 function llamar() {
+  tVoz = Date.now();
   call = peer.call(PREF + sala, stream);
   armarLlamada();
 }
 
 // el invitado es el que vuelve a tocar la puerta: datos y voz por separado, cada 3 s hasta que entren
-let yaEstuvo = false, reintento;
+let yaEstuvo = false, reintento, tDatos = 0, tVoz = 0;
 function reintentar() {
   clearTimeout(reintento);
   reintento = setTimeout(() => {
     if (!peer || peer.destroyed || peer.disconnected) return;   // al volver el servidor, "open" llama otra vez
-    if (!conn?.open) conectar();
-    else if (!call?.open) llamar();
+    // por relevo un intento puede tardar: se le dan 15 s antes de lanzar otro encima, si no se tumban entre ellos
+    const ahora = Date.now();
+    if (!conn?.open) { if (ahora - tDatos > 15000) conectar(); }
+    else if (!call?.open && ahora - tVoz > 15000) llamar();
     if (!conn?.open || !call?.open) reintentar();
-  }, 6000);
+  }, 4000);
 }
 
 // registro de lo que pasa, para saber por qué se cae
@@ -263,6 +267,7 @@ function armarLlamada() {
 }
 
 // cada 3 s: ¿la voz va directa o por relevo, y cuánto tarda la ida y vuelta?
+let ultimoCamino = "";
 setInterval(async () => {
   const pc = call?.peerConnection; if (!pc || !conn?.open) { $("red").textContent = ""; return; }
   const st = await pc.getStats(); let par;
@@ -270,6 +275,8 @@ setInterval(async () => {
   if (!par) return;
   const tipo = st.get(par.localCandidateId)?.candidateType;
   const ms = Math.round((par.currentRoundTripTime || 0) * 1000);
+  const camino = tipo === "relay" ? "relevo" : "directa";
+  if (camino !== ultimoCamino) { ultimoCamino = camino; log(`Camino de la voz: ${camino} (${ms} ms)`); }
   $("red").textContent = (tipo === "relay" ? "Voz por relevo (tu operador no deja ir directo)" : "Voz directa") + ` · ${ms} ms ida y vuelta`;
 }, 3000);
 
@@ -366,6 +373,13 @@ $("unirme").onclick = () => {
 };
 $("codigoIn").onkeydown = e => { if (e.key === "Enter") $("unirme").click(); };
 $("salir").onclick = () => location.reload();
+// para pegarlo en WhatsApp o en el chat con Ares
+$("copiarLog").onclick = async () => {
+  const txt = `Parche · ${host ? "anfitrión" : "invitado"} · ${navigator.userAgent.match(/iPhone|Android[^;)]*/)?.[0] || "PC"} · ${$("red").textContent}\n` +
+    [...$("log").children].reverse().map(li => li.textContent).join("\n");
+  try { await navigator.clipboard.writeText(txt); $("copiarLog").textContent = "Copiado ✓"; }
+  catch { prompt("Copia esto:", txt); }
+};
 
 $("modo").onclick = e => {
   const b = e.target.closest("button"); if (!b) return;

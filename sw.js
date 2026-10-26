@@ -1,5 +1,5 @@
 // Guarda la app en el celular para que abra rápido. Subir VERSION en cada cambio.
-const VERSION = "parche-v3";
+const VERSION = "parche-v4";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-180.png"];
 
 self.addEventListener("install", e => {
