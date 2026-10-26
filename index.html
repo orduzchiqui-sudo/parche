@@ -71,6 +71,7 @@
     <div class="card">
       <div class="code" id="codigo">----</div>
       <div class="status"><span class="dot" id="dot"></span><span id="estado">Esperando…</span></div>
+      <p class="hint" id="red"></p>
       <button id="salir">Salir de la sala</button>
     </div>
 
@@ -106,6 +107,11 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const PREF = "parche-sala-";
+// varios STUN para que la voz vaya directa; si el operador no deja, relevo de PeerJS: primero EE. UU. (más cerca que Europa)
+const RED = { config: { iceServers: [
+  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun.cloudflare.com:3478"] },
+  { urls: ["turn:us-0.turn.peerjs.com:3478", "turn:eu-0.turn.peerjs.com:3478"], username: "peerjs", credential: "peerjsp" }
+] } };
 const $ = id => document.getElementById(id);
 let peer, conn, call, stream, host = false, sala = "";
 let player, ytId = "", quieto = 0, ultimaMia = 0, latido, wake;
@@ -177,8 +183,9 @@ async function entrar(esHost, codigo) {
 }
 
 function abrirSala() {
-  peer = new Peer(PREF + sala);
-  peer.on("open", () => estado("Sala lista. Pásale el código a tu parcero.", "wait"));
+  peer = new Peer(PREF + sala, RED);
+  peer.on("open", () => { if (!conn?.open) estado("Sala lista. Pásale el código a tu parcero.", "wait"); });
+  peer.on("disconnected", volverAlServidor);
   peer.on("connection", c => { conn?.close(); conn = c; armarDatos(); });
   peer.on("call", c => { call?.close(); call = c; c.answer(stream); armarLlamada(); });
   peer.on("error", e => {
@@ -188,8 +195,9 @@ function abrirSala() {
 }
 
 function unirse() {
-  peer = new Peer();
-  peer.on("open", conectar);
+  peer = new Peer(RED);
+  peer.once("open", conectar);
+  peer.on("disconnected", volverAlServidor);
   peer.on("error", e => estado(e.type === "peer-unavailable" ? "Esa sala no existe o ya se cerró." : "Error: " + e.type, ""));
 }
 
@@ -201,10 +209,32 @@ function conectar() {
   armarLlamada();
 }
 
+// si la red parpadea, el cel pierde el servidor de encuentro: sin esto la sala ya no deja entrar a nadie
+function volverAlServidor() {
+  if (peer.destroyed) return;
+  if (!conn?.open) estado("Se fue la señal. Reconectando…", "wait");
+  setTimeout(() => !peer.destroyed && peer.disconnected && peer.reconnect(), 1500);
+}
+
 function armarLlamada() {
-  call.on("stream", s => { $("otro").srcObject = s; $("otro").play().catch(() => {}); });
+  call.on("stream", s => {
+    $("otro").srcObject = s; $("otro").play().catch(() => {});
+    // colchón de audio al mínimo: menos demora a cambio de algún corte si la señal es mala
+    call.peerConnection.getReceivers().forEach(r => { try { r.jitterBufferTarget = 0; r.playoutDelayHint = 0; } catch {} });
+  });
   call.on("close", () => estado("Se cortó la voz.", ""));
 }
+
+// cada 3 s: ¿la voz va directa o por relevo, y cuánto tarda la ida y vuelta?
+setInterval(async () => {
+  const pc = call?.peerConnection; if (!pc || !conn?.open) { $("red").textContent = ""; return; }
+  const st = await pc.getStats(); let par;
+  st.forEach(r => { if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") par = r; });
+  if (!par) return;
+  const tipo = st.get(par.localCandidateId)?.candidateType;
+  const ms = Math.round((par.currentRoundTripTime || 0) * 1000);
+  $("red").textContent = (tipo === "relay" ? "Voz por relevo (tu operador no deja ir directo)" : "Voz directa") + ` · ${ms} ms ida y vuelta`;
+}, 3000);
 
 function armarDatos() {
   conn.on("open", () => {
