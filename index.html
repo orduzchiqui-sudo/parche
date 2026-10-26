@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="es-CO">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Parche</title>
+<meta name="description" content="Hablen y escuchen la misma música, cada uno desde su celular.">
+<meta name="theme-color" content="#101114">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+  :root {
+    --bg: #101114; --card: #1A1C21; --line: #2A2D34; --txt: #EDEEF0; --dim: #9A9EA8;
+    --acc: #8B5CF6; --acc2: #22C55E; --bad: #EF4444; --r: 16px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--txt); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  main { max-width: 520px; margin: 0 auto; display: grid; gap: 14px; }
+  h1 { margin: 4px 0 0; font-size: 26px; letter-spacing: -.02em; }
+  h1 span { color: var(--acc); }
+  .sub { color: var(--dim); margin: 0; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 12px; }
+  .card h2 { margin: 0; font-size: 15px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+  button { font: inherit; border: 0; border-radius: 12px; padding: 13px 16px; background: var(--line); color: var(--txt); cursor: pointer; }
+  button.main { background: var(--acc); font-weight: 700; }
+  button:disabled { opacity: .45; }
+  input, select { font: inherit; width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--txt); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .code { font: 800 44px/1 ui-monospace, Consolas, monospace; letter-spacing: .18em; text-align: center; color: var(--acc); }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.on { background: var(--acc2); box-shadow: 0 0 10px var(--acc2); }
+  .dot.wait { background: #F59E0B; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border-radius: 12px; padding: 4px; gap: 4px; }
+  .seg button { padding: 10px; background: transparent; color: var(--dim); }
+  .seg button.sel { background: var(--line); color: var(--txt); font-weight: 600; }
+  .hint { font-size: 13px; color: var(--dim); margin: 0; }
+  #ptt { height: 110px; font-size: 18px; font-weight: 800; background: var(--line); user-select: none; -webkit-user-select: none; touch-action: none; }
+  #ptt.talking { background: var(--acc2); color: #06210f; }
+  #ptt.open { background: var(--acc); }
+  .vol { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 10px; font-size: 14px; color: var(--dim); }
+  input[type=range] { padding: 0; accent-color: var(--acc); }
+  .yt { aspect-ratio: 16/9; border-radius: 12px; overflow: hidden; background: #000; }
+  .yt iframe, #yt { width: 100%; height: 100%; }
+  .hide { display: none !important; }
+  .err { color: var(--bad); font-size: 14px; margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Par<span>che</span></h1>
+    <p class="sub">Hablen y escuchen la misma música, cada uno desde su cel.</p>
+  </header>
+
+  <!-- Entrada: crear o unirse -->
+  <section id="lobby" class="card">
+    <button class="main" id="crear">Crear sala</button>
+    <div class="row">
+      <input id="codigoIn" placeholder="Código" maxlength="4" autocapitalize="characters" autocomplete="off">
+      <button id="unirme">Unirme</button>
+    </div>
+    <p class="err" id="lobbyErr"></p>
+  </section>
+
+  <!-- Sala -->
+  <section id="sala" class="hide">
+    <div class="card">
+      <div class="code" id="codigo">----</div>
+      <div class="status"><span class="dot" id="dot"></span><span id="estado">Esperando…</span></div>
+      <button id="salir">Salir de la sala</button>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Voz</h2>
+      <div class="seg" id="modo">
+        <button data-m="calidad" class="sel">Calidad</button>
+        <button data-m="manos">Manos libres</button>
+      </div>
+      <p class="hint" id="modoHint">Hablas por el micrófono del cel y los AirPods solo reproducen: la música no pierde calidad.</p>
+      <select id="mic"></select>
+      <button id="ptt">Mantén para hablar</button>
+      <div class="row">
+        <button id="abierto">Micrófono abierto</button>
+      </div>
+      <div class="vol">Voz del otro <input type="range" id="volVoz" min="0" max="100" value="100"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Música · YouTube</h2>
+      <div class="row">
+        <input id="ytIn" placeholder="Pega el link de YouTube" inputmode="url">
+        <button class="main" id="ytPoner" style="flex:0 0 auto">Poner</button>
+      </div>
+      <div class="yt"><div id="yt"></div></div>
+      <p class="hint">Lo que uno pause o adelante, le pasa al otro. La primera vez, cada uno toca play una vez para que el cel deje sonar.</p>
+      <div class="vol">Música <input type="range" id="volMus" min="0" max="100" value="80"></div>
+    </div>
+  </section>
+</main>
+
+<audio id="otro" autoplay playsinline></audio>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const PREF = "parche-sala-";
+const $ = id => document.getElementById(id);
+let peer, conn, call, stream, host = false, sala = "";
+let player, ytId = "", quieto = 0, ultimaMia = 0, latido, wake;
+let modo = "calidad", abierto = false;
+
+// ---------- micrófono ----------
+const BT = /airpods|bluetooth|headset|hands-?free|manos libres|\bbt\b/i;
+
+async function pedirMic(deviceId) {
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (deviceId) audio.deviceId = { exact: deviceId };
+  const s = await navigator.mediaDevices.getUserMedia({ audio });
+  s.getAudioTracks()[0].enabled = abierto;
+  return s;
+}
+
+async function llenarMics() {
+  const ds = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audioinput");
+  $("mic").innerHTML = ds.map(d => `<option value="${d.deviceId}">${d.label || "Micrófono"}</option>`).join("");
+  return ds;
+}
+
+// en modo Calidad se escoge el micro del cel; en Manos libres, el de los audífonos
+async function aplicarModo() {
+  const ds = await llenarMics();
+  const elegido = modo === "calidad" ? ds.find(d => !BT.test(d.label) && d.deviceId !== "default") || ds.find(d => !BT.test(d.label))
+                                     : ds.find(d => BT.test(d.label));
+  if (elegido) { $("mic").value = elegido.deviceId; await cambiarMic(elegido.deviceId); }
+  $("modoHint").textContent = modo === "calidad"
+    ? "Hablas por el micrófono del cel y los AirPods solo reproducen: la música no pierde calidad."
+    : "Hablas por los AirPods. Mientras el micro esté abierto la música suena más plana: es el Bluetooth, no la app.";
+}
+
+async function cambiarMic(deviceId) {
+  const nuevo = await pedirMic(deviceId);
+  const pista = nuevo.getAudioTracks()[0];
+  const sender = call?.peerConnection?.getSenders().find(s => s.track?.kind === "audio");
+  if (sender) await sender.replaceTrack(pista);
+  stream?.getTracks().forEach(t => t.stop());
+  stream = nuevo;
+}
+
+function hablar(on) {
+  stream?.getAudioTracks().forEach(t => t.enabled = on || abierto);
+  $("ptt").classList.toggle("talking", on && !abierto);
+}
+
+// ---------- conexión ----------
+function estado(txt, cls) {
+  $("estado").textContent = txt;
+  $("dot").className = "dot " + (cls || "");
+}
+
+function nuevoCodigo() {
+  const L = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length: 4 }, () => L[Math.floor(Math.random() * L.length)]).join("");
+}
+
+async function entrar(esHost, codigo) {
+  $("lobbyErr").textContent = "";
+  try { stream = await pedirMic(); }
+  catch { $("lobbyErr").textContent = "Sin permiso de micrófono no hay voz. Dale permitir e intenta otra vez."; return; }
+  host = esHost; sala = codigo;
+  $("lobby").classList.add("hide"); $("sala").classList.remove("hide");
+  $("codigo").textContent = codigo;
+  await aplicarModo().catch(() => {});   // el micro ya escogido antes de llamar, para no cambiarlo en plena llamada
+  pantallaPrendida();
+  esHost ? abrirSala() : unirse();
+}
+
+function abrirSala() {
+  peer = new Peer(PREF + sala);
+  peer.on("open", () => estado("Sala lista. Pásale el código a tu parcero.", "wait"));
+  peer.on("connection", c => { conn?.close(); conn = c; armarDatos(); });
+  peer.on("call", c => { call?.close(); call = c; c.answer(stream); armarLlamada(); });
+  peer.on("error", e => {
+    if (e.type === "unavailable-id") { peer.destroy(); sala = nuevoCodigo(); $("codigo").textContent = sala; abrirSala(); }
+    else estado("Error: " + e.type, "");
+  });
+}
+
+function unirse() {
+  peer = new Peer();
+  peer.on("open", conectar);
+  peer.on("error", e => estado(e.type === "peer-unavailable" ? "Esa sala no existe o ya se cerró." : "Error: " + e.type, ""));
+}
+
+function conectar() {
+  estado("Conectando…", "wait");
+  conn = peer.connect(PREF + sala, { reliable: true });
+  armarDatos();
+  call = peer.call(PREF + sala, stream);
+  armarLlamada();
+}
+
+function armarLlamada() {
+  call.on("stream", s => { $("otro").srcObject = s; $("otro").play().catch(() => {}); });
+  call.on("close", () => estado("Se cortó la voz.", ""));
+}
+
+function armarDatos() {
+  conn.on("open", () => {
+    estado("Conectados", "on");
+    // el que llega se pone al día con lo que está sonando
+    if (host && ytId) enviar({ t: "st", id: ytId, at: player.getCurrentTime(), playing: sonando() });
+  });
+  conn.on("data", recibir);
+  conn.on("close", () => {
+    estado(host ? "Tu parcero se salió. La sala sigue abierta." : "Se perdió la conexión.", host ? "wait" : "");
+    if (!host) setTimeout(() => peer && !peer.destroyed && conectar(), 3000);
+  });
+}
+
+function enviar(m) { if (conn?.open) conn.send(m); }
+
+// ---------- YouTube sincronizado ----------
+const sonando = () => player?.getPlayerState?.() === YT.PlayerState.PLAYING;
+
+function idDe(url) {
+  const m = url.match(/(?:youtu\.be\/|v=|shorts\/|embed\/|live\/)([\w-]{11})/);
+  return m ? m[1] : /^[\w-]{11}$/.test(url.trim()) ? url.trim() : "";
+}
+
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player("yt", {
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+    events: {
+      onReady: () => player.setVolume(+$("volMus").value),
+      onStateChange: e => {
+        if (Date.now() < quieto) return;               // el cambio lo hizo el otro, no se rebota
+        if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.PAUSED) {
+          ultimaMia = Date.now();
+          enviar({ t: "st", id: ytId, at: player.getCurrentTime(), playing: e.data === YT.PlayerState.PLAYING });
+        }
+      }
+    }
+  });
+};
+
+function aplicar(m, forzar) {
+  if (!player?.loadVideoById) return;
+  quieto = Date.now() + 1500;
+  if (m.id !== ytId) {
+    ytId = m.id;
+    m.playing ? player.loadVideoById({ videoId: m.id, startSeconds: m.at }) : player.cueVideoById({ videoId: m.id, startSeconds: m.at });
+    return;
+  }
+  if (forzar || Math.abs(player.getCurrentTime() - m.at) > 1.5) player.seekTo(m.at, true);
+  if (m.playing && !sonando()) player.playVideo();
+  if (!m.playing && sonando()) player.pauseVideo();
+}
+
+function recibir(m) {
+  if (m.t === "st") aplicar(m, true);
+  // el latido del anfitrión corrige el desfase, salvo que yo acabe de tocar algo
+  if (m.t === "hb" && Date.now() - ultimaMia > 2500) aplicar(m, false);
+}
+
+// el anfitrión es el reloj: cada 2 s dice dónde va
+function latir() {
+  clearInterval(latido);
+  latido = setInterval(() => {
+    if (host && ytId && player?.getCurrentTime) enviar({ t: "hb", id: ytId, at: player.getCurrentTime(), playing: sonando() });
+  }, 2000);
+}
+
+// ---------- pantalla ----------
+// en el navegador, con la pantalla apagada se corta el audio: se mantiene prendida mientras estén en la sala
+async function pantallaPrendida() {
+  try { wake = await navigator.wakeLock?.request("screen"); } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && sala) pantallaPrendida(); });
+
+// ---------- botones ----------
+$("crear").onclick = () => { entrar(true, nuevoCodigo()); latir(); };
+$("unirme").onclick = () => {
+  const c = $("codigoIn").value.trim().toUpperCase();
+  if (c.length !== 4) { $("lobbyErr").textContent = "El código tiene 4 letras."; return; }
+  entrar(false, c);
+};
+$("codigoIn").onkeydown = e => { if (e.key === "Enter") $("unirme").click(); };
+$("salir").onclick = () => location.reload();
+
+$("modo").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  modo = b.dataset.m;
+  [...$("modo").children].forEach(x => x.classList.toggle("sel", x === b));
+  aplicarModo();
+};
+$("mic").onchange = () => cambiarMic($("mic").value);
+
+const ptt = $("ptt");
+ptt.onpointerdown = e => { ptt.setPointerCapture(e.pointerId); hablar(true); };
+ptt.onpointerup = ptt.onpointercancel = () => hablar(false);
+ptt.oncontextmenu = e => e.preventDefault();
+$("abierto").onclick = () => {
+  abierto = !abierto;
+  $("abierto").textContent = abierto ? "Cerrar micrófono" : "Micrófono abierto";
+  ptt.classList.toggle("open", abierto);
+  ptt.textContent = abierto ? "Micrófono abierto" : "Mantén para hablar";
+  hablar(false);
+};
+
+$("volVoz").oninput = e => $("otro").volume = e.target.value / 100;
+$("volMus").oninput = e => player?.setVolume?.(+e.target.value);
+
+$("ytPoner").onclick = () => {
+  const id = idDe($("ytIn").value);
+  if (!id) { $("ytIn").value = ""; $("ytIn").placeholder = "Ese link no es de YouTube"; return; }
+  ultimaMia = Date.now();
+  aplicar({ id, at: 0, playing: true }, true);
+  enviar({ t: "st", id, at: 0, playing: true });
+  $("ytIn").value = "";
+};
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
