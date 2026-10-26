@@ -72,6 +72,7 @@
       <div class="code" id="codigo">----</div>
       <div class="status"><span class="dot" id="dot"></span><span id="estado">Esperando…</span></div>
       <p class="hint" id="red"></p>
+      <details class="hint"><summary>Registro de conexión</summary><ol id="log" style="margin:8px 0 0;padding-left:0;list-style:none;font:12px/1.6 ui-monospace,Consolas,monospace"></ol></details>
       <button id="salir">Salir de la sala</button>
     </div>
 
@@ -183,46 +184,82 @@ async function entrar(esHost, codigo) {
 }
 
 function abrirSala() {
+  let abrio = false;
   peer = new Peer(PREF + sala, RED);
-  peer.on("open", () => { if (!conn?.open) estado("Sala lista. Pásale el código a tu parcero.", "wait"); });
+  peer.on("open", () => { abrio = true; log("Servidor de encuentro: conectado"); if (!conn?.open) estado("Sala lista. Pásale el código a tu parcero.", "wait"); });
   peer.on("disconnected", volverAlServidor);
-  peer.on("connection", c => { conn?.close(); conn = c; armarDatos(); });
-  peer.on("call", c => { call?.close(); call = c; c.answer(stream); armarLlamada(); });
+  peer.on("connection", c => { log("Llegó tu parcero (datos)"); const v = conn; conn = c; v?.close(); armarDatos(); });
+  peer.on("call", c => { log("Llegó tu parcero (voz)"); const v = call; call = c; v?.close(); c.answer(stream); armarLlamada(); });
   peer.on("error", e => {
-    if (e.type === "unavailable-id") { peer.destroy(); sala = nuevoCodigo(); $("codigo").textContent = sala; abrirSala(); }
-    else estado("Error: " + e.type, "");
+    log("Error: " + e.type);
+    // el código solo se cambia si nunca abrió; si ya estaba abierta, el servidor aún recuerda la sala y se reintenta con el mismo
+    if (e.type === "unavailable-id" && !abrio) { peer.destroy(); sala = nuevoCodigo(); $("codigo").textContent = sala; abrirSala(); }
   });
 }
 
 function unirse() {
   peer = new Peer(RED);
-  peer.once("open", conectar);
+  peer.once("open", () => { log("Servidor de encuentro: conectado"); conectar(); });
+  peer.on("open", () => yaEstuvo && reintentar());
   peer.on("disconnected", volverAlServidor);
-  peer.on("error", e => estado(e.type === "peer-unavailable" ? "Esa sala no existe o ya se cerró." : "Error: " + e.type, ""));
+  peer.on("error", e => {
+    log("Error: " + e.type);
+    if (e.type !== "peer-unavailable") return;
+    // si ya estuvieron conectados, la sala se está reconectando: se insiste
+    yaEstuvo ? reintentar() : estado("Esa sala no existe o ya se cerró.", "");
+  });
 }
 
 function conectar() {
-  estado("Conectando…", "wait");
+  estado(yaEstuvo ? "Reconectando…" : "Conectando…", "wait");
   conn = peer.connect(PREF + sala, { reliable: true });
   armarDatos();
+  llamar();
+}
+
+function llamar() {
   call = peer.call(PREF + sala, stream);
   armarLlamada();
+}
+
+// el invitado es el que vuelve a tocar la puerta: datos y voz por separado, cada 3 s hasta que entren
+let yaEstuvo = false, reintento;
+function reintentar() {
+  clearTimeout(reintento);
+  reintento = setTimeout(() => {
+    if (!peer || peer.destroyed || peer.disconnected) return;   // al volver el servidor, "open" llama otra vez
+    if (!conn?.open) conectar();
+    else if (!call?.open) llamar();
+    if (!conn?.open || !call?.open) reintentar();
+  }, 6000);
+}
+
+// registro de lo que pasa, para saber por qué se cae
+function log(txt) {
+  const li = document.createElement("li");
+  li.textContent = new Date().toLocaleTimeString("es-CO", { hour12: false }) + "  " + txt;
+  $("log").prepend(li);
+  while ($("log").children.length > 40) $("log").lastChild.remove();
 }
 
 // si la red parpadea, el cel pierde el servidor de encuentro: sin esto la sala ya no deja entrar a nadie
 function volverAlServidor() {
   if (peer.destroyed) return;
+  log("Servidor de encuentro: se perdió" + (conn?.open ? " (la voz sigue, no pasa nada)" : ""));
   if (!conn?.open) estado("Se fue la señal. Reconectando…", "wait");
   setTimeout(() => !peer.destroyed && peer.disconnected && peer.reconnect(), 1500);
 }
 
 function armarLlamada() {
+  const c = call;
+  // addEventListener y no oniceconnectionstatechange: ese lo usa PeerJS
+  c.peerConnection?.addEventListener("iceconnectionstatechange", () => log("Voz: " + ({ checking: "buscando camino", connected: "conectada", completed: "conectada", disconnected: "señal inestable", failed: "falló", closed: "cerrada" }[c.peerConnection.iceConnectionState] || c.peerConnection.iceConnectionState)));
+  c.on("close", () => { if (c !== call) return; log("Voz cortada"); if (!host) reintentar(); });
   call.on("stream", s => {
     $("otro").srcObject = s; $("otro").play().catch(() => {});
     // colchón de audio al mínimo: menos demora a cambio de algún corte si la señal es mala
     call.peerConnection.getReceivers().forEach(r => { try { r.jitterBufferTarget = 0; r.playoutDelayHint = 0; } catch {} });
   });
-  call.on("close", () => estado("Se cortó la voz.", ""));
 }
 
 // cada 3 s: ¿la voz va directa o por relevo, y cuánto tarda la ida y vuelta?
@@ -237,15 +274,19 @@ setInterval(async () => {
 }, 3000);
 
 function armarDatos() {
+  const c = conn;
   conn.on("open", () => {
+    yaEstuvo = true; log("Datos: conectados");
     estado("Conectados", "on");
     // el que llega se pone al día con lo que está sonando
     if (host && ytId) enviar({ t: "st", id: ytId, at: player.getCurrentTime(), playing: sonando() });
   });
   conn.on("data", recibir);
   conn.on("close", () => {
-    estado(host ? "Tu parcero se salió. La sala sigue abierta." : "Se perdió la conexión.", host ? "wait" : "");
-    if (!host) setTimeout(() => peer && !peer.destroyed && conectar(), 3000);
+    if (c !== conn) return;   // conexión vieja que se reemplazó: no es una caída
+    log("Datos: cortados");
+    estado(host ? "Tu parcero se salió. La sala sigue abierta." : "Se perdió la conexión. Reconectando…", "wait");
+    if (!host) reintentar();
   });
 }
 
@@ -307,7 +348,14 @@ function latir() {
 async function pantallaPrendida() {
   try { wake = await navigator.wakeLock?.request("screen"); } catch {}
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && sala) pantallaPrendida(); });
+document.addEventListener("visibilitychange", () => {
+  if (!sala) return;
+  // si sales de la app (WhatsApp, pantalla bloqueada), el cel la duerme y se corta: queda anotado
+  log(document.visibilityState === "visible" ? "Volviste a la app" : "Saliste de la app o se bloqueó la pantalla");
+  if (document.visibilityState === "visible") pantallaPrendida();
+});
+addEventListener("online", () => sala && log("El cel recuperó internet"));
+addEventListener("offline", () => sala && log("El cel se quedó sin internet"));
 
 // ---------- botones ----------
 $("crear").onclick = () => { entrar(true, nuevoCodigo()); latir(); };
